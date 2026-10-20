@@ -1,0 +1,203 @@
+name: Main CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 1 * * 1' # lundi 2 h à Paris en hiver, 3 h en été
+  workflow_dispatch:
+
+# Sur une PR, un nouveau commit annule l'exécution en cours
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '20.20.2'
+  # TEMPORAIRE : passer à 'true' pour rendre les quality gates SonarQube bloquantes
+  SONAR_QUALITYGATE_WAIT: 'false'
+
+jobs:
+
+  build-back:
+    name: Back-end – build et tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # requis par dependency-submission
+    defaults:
+      run:
+        working-directory: back
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+      - name: Installation Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - name: Configuration Gradle (cache et validation du wrapper)
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+      - name: Compilation, tests et mesure de la couverture (JaCoCo)
+        run: ./gradlew build
+      - name: Résumé des tests
+        if: always()
+        run: python3 ../.github/scripts/test_summary.py "Tests back-end" build/test-results/test
+      - name: Publication des rapports de tests et de couverture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: back-rapports
+          path: |
+            back/build/test-results/test/
+            back/build/reports/tests/test/
+            back/build/reports/jacoco/test/
+          if-no-files-found: warn
+      - name: Transmission au job SonarQube des rapports
+        uses: actions/upload-artifact@v7
+        with:
+          name: back-sonar
+          path: |
+            back/build/classes/
+            back/build/test-results/test/
+            back/build/reports/jacoco/test/jacocoTestReport.xml
+          retention-days: 1
+      - name: Publication du JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: back-jar
+          path: |
+            back/build/libs/*.jar
+            !back/build/libs/*-plain.jar
+      - name: Soumission du graphe des dépendances Gradle à GitHub
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        uses: gradle/actions/dependency-submission@v6
+        with:
+          build-root-directory: back
+
+  build-front:
+    name: Front-end – build et tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+      - name: Installation Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - name: Installation des dépendances
+        run: npm ci
+      - name: Audit des dépendances npm
+        # TEMPORAIRE (doc, section 4.1) : non bloquant tant qu'Angular 17 n'est pas mis à jour.
+        # Pour rendre l'audit bloquant, supprimer la ligne continue-on-error ci-dessous.
+        continue-on-error: true
+        run: npm audit --audit-level=high
+      - name: Construction de l'application
+        run: npm run build
+      - name: Tests et mesure de la couverture
+        run: npm run test:ci
+      - name: Résumé des tests
+        if: always()
+        run: python3 ../.github/scripts/test_summary.py "Tests front-end" test-results
+      - name: Publication des rapports de tests et de couverture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: front-rapports
+          path: |
+            front/test-results/
+            front/coverage/microcrm/
+          if-no-files-found: warn
+      - name: Transmission au job SonarQube du rapport de couverture
+        uses: actions/upload-artifact@v7
+        with:
+          name: front-sonar
+          path: front/coverage/microcrm/lcov.info
+          retention-days: 1
+      - name: Publication du build Angular
+        uses: actions/upload-artifact@v7
+        with:
+          name: front-dist
+          path: front/dist/microcrm/browser/
+
+  sonar-back:
+    name: Back-end – analyse SonarQube
+    needs: build-back
+    # Pas d'analyse sur les PR de forks ni de Dependabot : SONAR_TOKEN n'y est pas transmis
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: back
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Installation de Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - name: Configurer Gradle
+        uses: gradle/actions/setup-gradle@v6
+      - name: Récupération des classes et des rapports du build
+        uses: actions/download-artifact@v8
+        with:
+          name: back-sonar
+          path: back/build
+      - name: Analyser avec SonarQube Cloud
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: >-
+          ./gradlew sonar
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+          -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY_BACK }}
+          -Dsonar.qualitygate.wait=${{ env.SONAR_QUALITYGATE_WAIT }}
+          -Dsonar.gradle.skipCompile=true
+
+  sonar-front:
+    name: Front-end – analyse SonarQube
+    needs: build-front
+    # Pas d'analyse sur les PR de forks ni de Dependabot : SONAR_TOKEN n'y est pas transmis
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Récupération du rapport de couverture du build
+        uses: actions/download-artifact@v8
+        with:
+          name: front-sonar
+          path: front/coverage/microcrm
+      - name: Analyser avec SonarQube Cloud
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: front
+          args: >-
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY_FRONT }}
+            -Dsonar.qualitygate.wait=${{ env.SONAR_QUALITYGATE_WAIT }}

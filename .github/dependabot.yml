@@ -1,0 +1,38 @@
+# Mises à jour automatiques des dépendances
+# Calé le lundi à 3 h UTC, toujours deux heures après l'exécution hebdomadaire de la CI
+# (cron à 1 h UTC dans main.yaml). Les deux horaires sont en UTC pour garder cet écart toute l'année.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /back
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Etc/UTC
+    ignore:
+      # Montée de version majeure de Spring Boot : hors périmètre, planifiée
+      - dependency-name: 'org.springframework.boot*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /front
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Etc/UTC
+    ignore:
+      # Montée de version majeure d'Angular : hors périmètre, planifiée
+      - dependency-name: '@angular*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Etc/UTC
+
+  # Écosystème docker : à ajouter à l'étape 4, avec les nouveaux Dockerfiles (/back et /front).
