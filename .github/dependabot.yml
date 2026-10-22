@@ -35,4 +35,16 @@ updates:
       time: '03:00'
       timezone: Etc/UTC
 
-  # Écosystème docker : à ajouter à l'étape 4, avec les nouveaux Dockerfiles (/back et /front).
+  # Écosystème docker
+  - package-ecosystem: docker
+    directories: ['/back', '/front']
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Etc/UTC
+    ignore:
+      - dependency-name: 'node'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'eclipse-temurin'
+        update-types: ['version-update:semver-major']
