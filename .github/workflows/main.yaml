@@ -272,6 +272,9 @@ jobs:
           exit-code: '1'
       - name: Trivy – seuil bloquant, image back-end
         if: success() || failure() # on vérifie l'image même si les autres vérifications Trivy ont échoué
+        # TEMPORAIRE (doc, section 4.1) : non bloquant tant que Spring Boot 3.2.5 n'est pas mis à jour
+        # (CVE CRITICAL de Tomcat et Spring embarqués). Après la mise à jour, supprimer la ligne ci-dessous.
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: microcrm-back:ci

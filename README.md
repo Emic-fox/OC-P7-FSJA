@@ -227,6 +227,7 @@ Contrôles temporairement non bloquants (voir la documentation technique) :
 
 - quality gates SonarQube : variable `SONAR_QUALITYGATE_WAIT` dans le workflow ;
 - `npm audit --audit-level=high` : vulnérabilités connues dans les dépendances Angular 17.
+- seuil Trivy de l'image back : vulnérabilités CRITICAL de Tomcat et Spring embarqués par Spring Boot 3.2.5, à rendre bloquant après sa mise à jour.
 
 Les jobs « Back-end – build et tests » et « Front-end – build et tests » sont obligatoires pour fusionner une PR dans `main`.
 
