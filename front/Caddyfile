@@ -1,0 +1,20 @@
+{
+	# CA interne non installée dans le magasin de confiance : impossible en non-root, inutile hors du conteneur
+	skip_install_trust
+	# API d'administration (port 2019) désactivée : config figée dans l'image, surface d'attaque réduite
+	admin off
+}
+
+localhost {
+	tls internal
+	root * /srv
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

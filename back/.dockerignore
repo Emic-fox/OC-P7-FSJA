@@ -1,0 +1,9 @@
+# Sorties de build, reconstruites dans l'image
+build/
+bin/
+.gradle/
+
+.vscode/
+.idea/
+gradle.properties
+*.md

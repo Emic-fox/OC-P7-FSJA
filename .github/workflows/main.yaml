@@ -137,8 +137,9 @@ jobs:
   sonar-back:
     name: Back-end – analyse SonarQube
     needs: build-back
-    # Pas d'analyse sur les PR de forks ni de Dependabot : SONAR_TOKEN n'y est pas transmis
-    if: >-
+    # Condition nommée « trusted-repo » (ancre YAML), réutilisée par sonar-front et les envois SARIF :
+    # exclut les PR de forks et de Dependabot (secrets non transmis, GITHUB_TOKEN en lecture seule)
+    if: &trusted-repo >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
@@ -176,10 +177,7 @@ jobs:
   sonar-front:
     name: Front-end – analyse SonarQube
     needs: build-front
-    # Pas d'analyse sur les PR de forks ni de Dependabot : SONAR_TOKEN n'y est pas transmis
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: *trusted-repo # PR de forks et de Dependabot exclues (voir sonar-back)
     runs-on: ubuntu-latest
     steps:
       - name: Récupération du code
@@ -201,3 +199,92 @@ jobs:
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY_FRONT }}
             -Dsonar.qualitygate.wait=${{ env.SONAR_QUALITYGATE_WAIT }}
+
+  images:
+    name: Images Docker – build et scan Trivy
+    needs: [build-back, build-front]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # envoi des résultats de Trivy dans l'onglet Security
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+      - name: Construction de l'image back-end
+        run: docker build -t microcrm-back:ci back
+      - name: Construction de l'image front-end
+        run: docker build -t microcrm-front:ci front
+
+      # trivy-action est épinglée par SHA (exception à la règle des tags majeurs) :
+      # ses tags ont été compromis en mars 2026. Dependabot met à jour le SHA et le commentaire.
+      # 1) Rapports complets (toutes sévérités) au format SARIF, non bloquants
+      - name: Trivy – secrets et mauvaises configurations du dépôt (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: sarif
+          output: trivy-depot.sarif
+      - name: Trivy – image back-end (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: microcrm-back:ci
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-back.sarif
+      - name: Trivy – image front-end (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: microcrm-front:ci
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-front.sarif
+
+      # 2) Envoi vers l'onglet Security
+      - name: Envoi SARIF – dépôt
+        if: *trusted-repo
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-depot.sarif
+          category: trivy-depot
+      - name: Envoi SARIF – image back-end
+        if: *trusted-repo
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-back.sarif
+          category: trivy-image-back
+      - name: Envoi SARIF – image front-end
+        if: *trusted-repo
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-front.sarif
+          category: trivy-image-front
+
+      # 3) Seuil bloquant : CRITICAL avec correctif disponible (HIGH = alerte via l'onglet Security)
+      - name: Trivy – seuil bloquant, dépôt
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          severity: CRITICAL
+          exit-code: '1'
+      - name: Trivy – seuil bloquant, image back-end
+        if: success() || failure() # on vérifie l'image même si les autres vérifications Trivy ont échoué
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: microcrm-back:ci
+          scanners: vuln,secret
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Trivy – seuil bloquant, image front-end
+        if: success() || failure() # on vérifie l'image même si les autres vérifications Trivy ont échoué
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: microcrm-front:ci
+          scanners: vuln,secret
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
