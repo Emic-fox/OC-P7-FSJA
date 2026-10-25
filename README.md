@@ -15,6 +15,7 @@ L'application MicroCRM est une implémentation simplifiée d'un ["CRM" (Customer
 
 - [Code source](#code-source)
 - [Démarrer avec Docker Compose](#démarrer-avec-docker-compose)
+- [Déployer à partir des images publiées](#déployer-à-partir-des-images-publiées)
 - [Intégration continue](#intégration-continue)
 - [Mises à jour des dépendances](#mises-à-jour-des-dépendances)
 
@@ -35,7 +36,8 @@ Ce [monorepo](https://en.wikipedia.org/wiki/Monorepo) contient les 2 composantes
 │   └── dependabot.yml           # mises à jour automatiques des dépendances
 ├── back/                        # API Spring Boot (+ Dockerfile)
 ├── front/                       # application Angular (+ Dockerfile, Caddyfile)
-└── docker-compose.yml           # lancement de l'application complète
+├── docker-compose.yml           # lancement de l'application complète (construction depuis les sources)
+└── docker-compose.deploy.yml    # déploiement à partir des images publiées sur GHCR
 ```
 
 ### Démarrer avec les sources
@@ -195,6 +197,28 @@ docker build -t microcrm-back back
 docker build -t microcrm-front front
 ```
 
+## Déployer à partir des images publiées
+
+À chaque fusion sur `main`, la CI publie les deux images sur GitHub Container Registry, avec deux étiquettes : `latest` et le SHA court du commit.
+
+- `ghcr.io/emic-fox/microcrm-back`
+- `ghcr.io/emic-fox/microcrm-front`
+
+Le fichier `docker-compose.deploy.yml` lance l'application à partir de ces images, sans construction : il suffit seul, sans les sources.
+
+```shell
+docker compose -f docker-compose.deploy.yml pull
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+Pour déployer une version précise (retour arrière, par exemple), indiquer son SHA court :
+
+```shell
+MICROCRM_TAG=<sha> docker compose -f docker-compose.deploy.yml up -d
+```
+
+Les adresses, le certificat et les données sont les mêmes qu'avec `docker-compose.yml` (voir ci-dessus).
+
 ## Intégration continue
 
 La pipeline est définie dans `.github/workflows/main.yaml` (GitHub Actions).
@@ -214,13 +238,17 @@ La pipeline est définie dans `.github/workflows/main.yaml` (GitHub Actions).
 | Front-end – build et tests | `npm ci`, `npm audit`, build Angular, tests Karma en mode headless, couverture |
 | Back-end – analyse SonarQube | Analyse de qualité du back sur SonarQube Cloud |
 | Front-end – analyse SonarQube | Analyse de qualité du front sur SonarQube Cloud |
-| Images Docker – build et scan Trivy | Construction des deux images, scan Trivy (vulnérabilités, secrets, mauvaises configurations) |
+| Images Docker – construction | Construction des deux images, nommées comme sur GHCR, et transmission aux jobs suivants |
+| Images Docker – smoke test | Démarrage avec `docker-compose.deploy.yml` et vérification que l'API et le front répondent |
+| Images Docker – scan Trivy | Vulnérabilités, secrets et mauvaises configurations, résultats dans l'onglet Security |
+| Images Docker – publication sur GHCR | Sur `main` uniquement, une fois toute la chaîne réussie : publication des images testées et analysées (`latest` et SHA court) |
 
 Les résultats des tests sont résumés dans la page de chaque exécution, et les rapports sont téléchargeables en artefacts. Les résultats Trivy sont envoyés dans l'onglet **Security > Code scanning**.
 
 ### Contrôles bloquants
 
 - Échec de compilation ou d'un test ;
+- Échec du smoke test : l'application assemblée ne démarre pas ou ne répond pas ;
 - Vulnérabilité **CRITICAL** avec correctif disponible dans une image, secret ou mauvaise configuration **CRITICAL** dans le dépôt (Trivy).
 
 Contrôles temporairement non bloquants (voir la documentation technique) :
@@ -241,6 +269,8 @@ Les jobs « Back-end – build et tests » et « Front-end – build et tests »
 | `SONAR_PROJECT_KEY_FRONT` | Variable | Clé du projet SonarQube du front |
 
 À activer également : **Settings > Advanced Security > Dependency graph** (nécessaire à l'envoi du graphe de dépendances Gradle).
+
+La publication sur GHCR utilise le `GITHUB_TOKEN` fourni par GitHub Actions : aucun secret supplémentaire n'est nécessaire.
 
 Les analyses SonarQube et l'envoi des résultats Trivy sont ignorés sur les PR provenant de forks et de Dependabot, qui n'ont pas accès aux secrets et disposent d'un jeton en lecture seule.
 
