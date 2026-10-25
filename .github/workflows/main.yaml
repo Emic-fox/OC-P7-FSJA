@@ -201,8 +201,83 @@ jobs:
             -Dsonar.qualitygate.wait=${{ env.SONAR_QUALITYGATE_WAIT }}
 
   images:
-    name: Images Docker – build et scan Trivy
+    name: Images Docker – construction
     needs: [build-back, build-front]
+    runs-on: ubuntu-latest
+    # Images nommées comme sur GHCR (étiquette : SHA court du commit) : le smoke test, le scan
+    # et la publication utilisent exactement les images construites ici, transmises en artefact
+    outputs:
+      prefix: ${{ steps.naming.outputs.prefix }}
+      tag: ${{ steps.naming.outputs.tag }}
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+      - name: Nommage des images
+        id: naming
+        run: |
+          echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/microcrm" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Construction de l'image back-end
+        run: >-
+          docker build back
+          -t "${{ steps.naming.outputs.prefix }}-back:${{ steps.naming.outputs.tag }}"
+          --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: Construction de l'image front-end
+        run: >-
+          docker build front
+          -t "${{ steps.naming.outputs.prefix }}-front:${{ steps.naming.outputs.tag }}"
+          --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: Sauvegarde des images
+        run: >-
+          docker save
+          "${{ steps.naming.outputs.prefix }}-back:${{ steps.naming.outputs.tag }}"
+          "${{ steps.naming.outputs.prefix }}-front:${{ steps.naming.outputs.tag }}"
+          | gzip > images.tar.gz
+      - name: Envoi des images aux jobs suivants
+        uses: actions/upload-artifact@v7
+        with:
+          name: images
+          path: images.tar.gz
+          retention-days: 1
+
+  smoke-test:
+    name: Images Docker – smoke test
+    needs: images
+    runs-on: ubuntu-latest
+    # Variables lues par docker-compose.deploy.yml
+    env:
+      MICROCRM_IMAGE_PREFIX: ${{ needs.images.outputs.prefix }}
+      MICROCRM_TAG: ${{ needs.images.outputs.tag }}
+    steps:
+      - name: Récupération du fichier de déploiement
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: docker-compose.deploy.yml
+          sparse-checkout-cone-mode: false
+      - name: Récupération des images construites
+        uses: actions/download-artifact@v8
+        with:
+          name: images
+      - name: Chargement des images
+        run: gunzip -c images.tar.gz | docker load
+      # L'application assemblée démarre avec le fichier de déploiement et répond
+      - name: Démarrage
+        run: docker compose -f docker-compose.deploy.yml up -d --pull never --wait --wait-timeout 120
+      - name: Vérifications
+        run: |
+          curl --fail --silent --show-error http://localhost:8080/persons > /dev/null
+          curl --fail --silent --show-error --insecure https://localhost/ > /dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost/)" = 308
+      - name: Journaux en cas d'échec
+        if: failure()
+        run: docker compose -f docker-compose.deploy.yml logs
+      - name: Arrêt
+        if: always()
+        run: docker compose -f docker-compose.deploy.yml down -v
+
+  trivy:
+    name: Images Docker – scan Trivy
+    needs: images
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -210,10 +285,12 @@ jobs:
     steps:
       - name: Récupération du code
         uses: actions/checkout@v7
-      - name: Construction de l'image back-end
-        run: docker build -t microcrm-back:ci back
-      - name: Construction de l'image front-end
-        run: docker build -t microcrm-front:ci front
+      - name: Récupération des images construites
+        uses: actions/download-artifact@v8
+        with:
+          name: images
+      - name: Chargement des images
+        run: gunzip -c images.tar.gz | docker load
 
       # trivy-action est épinglée par SHA (exception à la règle des tags majeurs) :
       # ses tags ont été compromis en mars 2026. Dependabot met à jour le SHA et le commentaire.
@@ -229,14 +306,14 @@ jobs:
       - name: Trivy – image back-end (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: microcrm-back:ci
+          image-ref: ${{ needs.images.outputs.prefix }}-back:${{ needs.images.outputs.tag }}
           scanners: vuln,secret
           format: sarif
           output: trivy-back.sarif
       - name: Trivy – image front-end (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: microcrm-front:ci
+          image-ref: ${{ needs.images.outputs.prefix }}-front:${{ needs.images.outputs.tag }}
           scanners: vuln,secret
           format: sarif
           output: trivy-front.sarif
@@ -277,7 +354,7 @@ jobs:
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: microcrm-back:ci
+          image-ref: ${{ needs.images.outputs.prefix }}-back:${{ needs.images.outputs.tag }}
           scanners: vuln,secret
           severity: CRITICAL
           ignore-unfixed: true
@@ -286,8 +363,41 @@ jobs:
         if: success() || failure() # on vérifie l'image même si les autres vérifications Trivy ont échoué
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: microcrm-front:ci
+          image-ref: ${{ needs.images.outputs.prefix }}-front:${{ needs.images.outputs.tag }}
           scanners: vuln,secret
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+
+  publish:
+    name: Images Docker – publication sur GHCR
+    # Uniquement après une fusion sur main, et si toute la chaîne a réussi
+    needs: [images, smoke-test, trivy, sonar-back, sonar-front]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # pour la publication sur GHCR
+    env:
+      PREFIX: ${{ needs.images.outputs.prefix }}
+      TAG: ${{ needs.images.outputs.tag }}
+    steps:
+      - name: Récupération des images construites, testées et analysées
+        uses: actions/download-artifact@v8
+        with:
+          name: images
+      - name: Chargement des images
+        run: gunzip -c images.tar.gz | docker load
+      - name: Connexion à GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publication (SHA court et latest)
+        run: |
+          for service in back front; do
+            docker tag "$PREFIX-$service:$TAG" "$PREFIX-$service:latest"
+            docker push "$PREFIX-$service:$TAG"
+            docker push "$PREFIX-$service:latest"
+          done
