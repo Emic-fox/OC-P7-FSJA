@@ -24,6 +24,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-rest'
 	implementation 'ro.polak:spring-boot-data-fixtures:0.2.0'
+	// Logs au format JSON (logback-spring.xml), collectés par Filebeat dans les conteneurs.
+	// 7.4 : dernière version prévue pour Logback 1.3 / 1.4, celle de Spring Boot 3.2
+	implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	runtimeOnly 'org.hsqldb:hsqldb'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

@@ -14,6 +14,9 @@ updates:
       # Montée de version majeure de Spring Boot : hors périmètre, planifiée
       - dependency-name: 'org.springframework.boot*'
         update-types: ['version-update:semver-major']
+      # logstash-logback-encoder 8.x et plus vise Logback 1.5 (Spring Boot 3.3 et plus) : à monter avec Spring Boot
+      - dependency-name: 'net.logstash.logback:logstash-logback-encoder'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: npm
     directory: /front
