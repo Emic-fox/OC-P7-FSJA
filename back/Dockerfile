@@ -16,6 +16,7 @@ WORKDIR /app
 COPY --from=build /src/build/libs/*.jar app.jar
 USER app
 EXPOSE 8080
+ENV SPRING_PROFILES_INCLUDE=docker
 HEALTHCHECK --interval=15s --timeout=3s --start-period=40s --retries=3 \
     CMD wget -q -O /dev/null http://localhost:8080/actuator/health || exit 1
 ENTRYPOINT ["java", "-jar", "app.jar"]

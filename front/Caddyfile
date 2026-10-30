@@ -7,6 +7,11 @@
 
 localhost {
 	tls internal
+	# Logs d'accès, en JSON sur la sortie d'erreur par défaut en conteneur, collectés par Filebeat (monitoring/)
+	log
+	# Sonde de santé du conteneur (wget depuis le conteneur lui-même) exclue des logs
+	@healthcheck remote_ip 127.0.0.1 ::1
+	log_skip @healthcheck
 	root * /srv
 	encode zstd gzip
 	try_files {path} /index.html

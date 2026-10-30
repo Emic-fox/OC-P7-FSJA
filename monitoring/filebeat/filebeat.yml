@@ -1,0 +1,22 @@
+# Filebeat : lecture des logs des conteneurs Docker et envoi à Logstash
+
+filebeat.inputs:
+  - type: filestream
+    id: docker-containers
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    parsers:
+      - container:
+          format: docker
+
+processors:
+  - add_docker_metadata: ~
+  # Ne garde que les conteneurs de l'application (projet Compose « microcrm »), pas ceux de la stack
+  - drop_event:
+      when:
+        not:
+          equals:
+            container.labels.com_docker_compose_project: "microcrm"
+
+output.logstash:
+  hosts: ["logstash:5044"]

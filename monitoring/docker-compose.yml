@@ -1,0 +1,64 @@
+# Stack Elastic : Filebeat -> Logstash -> Elasticsearch -> Kibana
+# Collecte les logs des conteneurs du projet Compose « microcrm ».
+# Lancement depuis la racine : docker compose -f monitoring/docker-compose.yml up -d
+name: microcrm-monitoring
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false" # TEMPORAIRE, réactivée à l'étape 1b
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    ports:
+      - "127.0.0.1:9200:9200"
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:9.5.5
+    environment:
+      LS_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+    # Port 5044 non publié : seul Filebeat s'y connecte
+    mem_limit: 1g
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.5.5
+    ports:
+      - "127.0.0.1:5601:5601"
+    mem_limit: 1g
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:9.5.5
+    # root requis : les fichiers de logs et le socket Docker appartiennent à root
+    user: root
+    # strict.perms=false : sous Docker Desktop, le fichier monté apparaît modifiable par tous
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Métadonnées des conteneurs (projet et service Compose)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - filebeat-data:/usr/share/filebeat/data
+    mem_limit: 256m
+    depends_on:
+      - logstash
+
+volumes:
+  es-data:
+  filebeat-data:
