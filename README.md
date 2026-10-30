@@ -16,6 +16,7 @@ L'application MicroCRM est une implémentation simplifiée d'un ["CRM" (Customer
 - [Code source](#code-source)
 - [Démarrer avec Docker Compose](#démarrer-avec-docker-compose)
 - [Déployer à partir des images publiées](#déployer-à-partir-des-images-publiées)
+- [Monitoring (Elastic Stack)](#monitoring-elastic-stack)
 - [Intégration continue](#intégration-continue)
 - [Mises à jour des dépendances](#mises-à-jour-des-dépendances)
 
@@ -36,6 +37,7 @@ Ce [monorepo](https://en.wikipedia.org/wiki/Monorepo) contient les 2 composantes
 │   └── dependabot.yml           # mises à jour automatiques des dépendances
 ├── back/                        # API Spring Boot (+ Dockerfile)
 ├── front/                       # application Angular (+ Dockerfile, Caddyfile)
+├── monitoring/                  # stack Elastic (Filebeat, Logstash, Elasticsearch, Kibana), hors CI
 ├── docker-compose.yml           # lancement de l'application complète (construction depuis les sources)
 └── docker-compose.deploy.yml    # déploiement à partir des images publiées sur GHCR
 ```
@@ -218,6 +220,44 @@ MICROCRM_TAG=<sha> docker compose -f docker-compose.deploy.yml up -d
 ```
 
 Les adresses, le certificat et les données sont les mêmes qu'avec `docker-compose.yml` (voir ci-dessus).
+
+## Monitoring (Elastic Stack)
+
+Les logs des conteneurs de MicroCRM sont centralisés dans une stack Elastic 9.5 (anciennement ELK), lancée à part de l'application et hors CI :
+
+```text
+conteneurs back et front -> Filebeat -> Logstash -> Elasticsearch -> Kibana
+```
+
+En conteneur, le back écrit ses logs applicatifs et son journal d'accès en JSON (profil Spring `docker`), et le front ses logs d'accès Caddy. Logstash les range dans les data streams `logs-microcrm.back-default` et `logs-microcrm.front-default`. Le détail est commenté dans les fichiers de `monitoring/`.
+
+> Sécurité d'Elasticsearch désactivée pour l'instant, ports publiés sur `127.0.0.1` : à réserver au poste local.
+
+### Lancement
+
+Prévoir environ 4,5 Go de mémoire pour Docker en plus de l'application (Windows : paramètre `memory` de `.wslconfig`).
+
+```shell
+docker compose up -d --build                              # application
+docker compose -f monitoring/docker-compose.yml up -d     # stack Elastic
+```
+
+Kibana : http://localhost:5601 (une à deux minutes au premier démarrage).
+
+Pour alimenter les tableaux de bord :
+
+- activité normale : utiliser l'application (listes, fiches, création et modification) ;
+- erreur 404 : ouvrir http://localhost:8080/persons/999999 ;
+- pic d'activité (Git Bash) : `for i in $(seq 300); do curl -s -o /dev/null http://localhost:8080/persons & done; wait`.
+
+Si aucun log n'arrive : `docker compose -f monitoring/docker-compose.yml logs filebeat logstash`.
+
+### Arrêt
+
+```shell
+docker compose -f monitoring/docker-compose.yml down       # logs conservés (volume es-data)
+docker compose -f monitoring/docker-compose.yml down -v    # logs supprimés
+```
 
 ## Intégration continue
 
