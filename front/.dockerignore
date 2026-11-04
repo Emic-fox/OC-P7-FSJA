@@ -1,0 +1,9 @@
+# Dépendances et sorties de build : réinstallées / reconstruites dans l'image
+node_modules/
+dist/
+
+.angular/
+coverage/
+test-results/
+.vscode/
+*.md

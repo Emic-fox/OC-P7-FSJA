@@ -1,0 +1,25 @@
+{
+	# CA interne non installée dans le magasin de confiance : impossible en non-root, inutile hors du conteneur
+	skip_install_trust
+	# API d'administration (port 2019) désactivée : config figée dans l'image, surface d'attaque réduite
+	admin off
+}
+
+localhost {
+	tls internal
+	# Logs d'accès, en JSON sur la sortie d'erreur par défaut en conteneur, collectés par Filebeat (monitoring/)
+	log
+	# Sonde de santé du conteneur (wget depuis le conteneur lui-même) exclue des logs
+	@healthcheck remote_ip 127.0.0.1 ::1
+	log_skip @healthcheck
+	root * /srv
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

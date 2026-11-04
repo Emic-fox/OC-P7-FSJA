@@ -14,6 +14,9 @@ updates:
       # Montée de version majeure de Spring Boot : hors périmètre, planifiée
       - dependency-name: 'org.springframework.boot*'
         update-types: ['version-update:semver-major']
+      # logstash-logback-encoder 8.x et plus vise Logback 1.5 (Spring Boot 3.3 et plus) : à monter avec Spring Boot
+      - dependency-name: 'net.logstash.logback:logstash-logback-encoder'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: npm
     directory: /front
@@ -35,4 +38,16 @@ updates:
       time: '03:00'
       timezone: Etc/UTC
 
-  # Écosystème docker : à ajouter à l'étape 4, avec les nouveaux Dockerfiles (/back et /front).
+  # Écosystème docker
+  - package-ecosystem: docker
+    directories: ['/back', '/front']
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Etc/UTC
+    ignore:
+      - dependency-name: 'node'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'eclipse-temurin'
+        update-types: ['version-update:semver-major']

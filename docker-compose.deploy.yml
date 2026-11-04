@@ -1,0 +1,45 @@
+# Déploiement à partir des images publiées sur GHCR
+# Version déployée : MICROCRM_TAG (latest par défaut, ou SHA court d'un commit de main)
+name: microcrm
+
+services:
+  back:
+    image: ${MICROCRM_IMAGE_PREFIX:-ghcr.io/emic-fox/microcrm}-back:${MICROCRM_TAG:-latest}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:hsqldb:file:/data/microcrm;shutdown=true
+      SPRING_DATASOURCE_USERNAME: sa
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    volumes:
+      - back-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  front:
+    image: ${MICROCRM_IMAGE_PREFIX:-ghcr.io/emic-fox/microcrm}-front:${MICROCRM_TAG:-latest}
+    depends_on:
+      back:
+        condition: service_healthy
+    ports:
+      - "443:443"
+      - "443:443/udp"
+      - "80:80"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE # Nécessaire pour Caddy, écoute sur les ports 80 et 443
+
+volumes:
+  back-data:
+  caddy-data:
+  caddy-config:
