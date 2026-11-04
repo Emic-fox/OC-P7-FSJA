@@ -10,6 +10,8 @@ RUN npm run build
 
 # Étape 2 : fichiers statiques servis par Caddy en HTTPS
 FROM caddy:2.11-alpine
+# Temporaire : correctif failles critiques, en attendant que l'image Caddy soit mise à jour
+RUN apk upgrade --no-cache brotli-libs curl
 # Création user non root avec accès à /data (certificats de l'autorité interne) et /config (configuration sauvegardée)
 RUN addgroup -S web && adduser -S -D -H -G web web \
     && chown -R web:web /data /config
